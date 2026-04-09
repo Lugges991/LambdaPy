@@ -1,0 +1,89 @@
+// LambdaPi surface syntax grammar (Lark Earley)
+//
+// Supports both Python-style and Haskell-style syntax:
+//   Python: assume x : T        Haskell: assume (x :: T)
+//   Python: let x : T = body    Haskell: let x = (body :: T)
+//   Python: e : T               Haskell: e :: T
+//   Python: Type 0              Haskell: * (same as Type 0)
+//
+// Each statement occupies one logical line ending with NEWLINE.
+
+%import common.CNAME    -> NAME
+%import common.INT
+%import common.NEWLINE
+%import common.WS_INLINE
+%ignore WS_INLINE
+%ignore /--[^\n]*/
+
+start: statement+
+
+// ---------------------------------------------------------------------------
+// Statements  (each ends with NEWLINE)
+// ---------------------------------------------------------------------------
+
+// Haskell-style: assume (a :: *) (b :: *)  or  assume a :: *
+// Python-style:  assume x y : T
+statement: "assume" paren_binding+ NEWLINE               -> assume_multi_stmt
+         | "assume" NAME ("::" | ":") term NEWLINE       -> assume_single_stmt
+         | "assume" name_list ":" term NEWLINE            -> assume_stmt
+         | "let"    NAME "=" term NEWLINE                 -> let_infer_stmt
+         | "let"    NAME ":" term "=" term NEWLINE        -> let_stmt
+         | "eval"   term NEWLINE                          -> eval_stmt
+         | "check"  term NEWLINE                          -> check_stmt
+
+// Parenthesized binding for Haskell-style assume
+paren_binding: "(" NAME ("::" | ":") term ")"
+
+name_list: NAME+
+
+// ---------------------------------------------------------------------------
+// Terms
+// ---------------------------------------------------------------------------
+
+term: lam_term
+    | forall_term
+    | app_term "->" term              -> arrow
+    | app_term ("::" | ":") term      -> ann
+    | app_term
+
+// Lambda
+lam_term: "\\" NAME+ "->" term
+
+// Universal (forall binder supports both : and ::)
+forall_term: "forall" binder+ "." term
+
+binder: "(" NAME ("::" | ":") term ")"
+
+// ---------------------------------------------------------------------------
+// Application (left-associative)
+// ---------------------------------------------------------------------------
+
+app_term: atom+  -> app_chain
+
+// ---------------------------------------------------------------------------
+// Atoms
+// ---------------------------------------------------------------------------
+
+atom: "(" term ")"   -> paren
+    | "Type" INT?    -> universe
+    | "*" INT?       -> universe
+    | "Nat"          -> nat
+    | "Zero"         -> zero
+    | "Succ"         -> succ_kw
+    | "NatElim"      -> nat_elim_kw
+    | "natElim"      -> nat_elim_kw
+    | "Vec"          -> vec_kw
+    | "Nil"          -> nil_kw
+    | "Cons"         -> cons_kw
+    | "VecElim"      -> vec_elim_kw
+    | "vecElim"      -> vec_elim_kw
+    | "Fin"          -> fin_kw
+    | "FZero"        -> fzero_kw
+    | "FSucc"        -> fsucc_kw
+    | "FinElim"      -> fin_elim_kw
+    | "finElim"      -> fin_elim_kw
+    | "Eq"           -> eq_kw
+    | "Refl"         -> refl_kw
+    | "EqElim"       -> eq_elim_kw
+    | "eqElim"       -> eq_elim_kw
+    | NAME           -> var
