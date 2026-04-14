@@ -155,65 +155,71 @@ def _fresh(names: list[str]) -> str:
     return f"v{len(names)}"
 
 
-def _has_bound_zero(term: CheckTerm) -> bool:
-    """Return True if Bound(0) appears free in term."""
+def _has_bound(term: CheckTerm, target: int) -> bool:
+    """Return True if Bound(target) appears free in term."""
     match term:
         case Inf(t):
-            return _has_bound_zero_inf(t)
+            return _has_bound_inf(t, target)
         case Lam(body):
-            # Under a binder Bound(0) is a different variable; look for Bound(1)
-            return _has_bound_zero_shifted(body, 1)
+            return _has_bound(body, target + 1)
         case _:
             return False
 
 
-def _has_bound_zero_inf(term: InferTerm) -> bool:
+def _has_bound_inf(term: InferTerm, target: int) -> bool:
     match term:
-        case Bound(0):
-            return True
-        case Bound(_):
-            return False
+        case Bound(n):
+            return n == target
         case Free(_) | Star(_) | Nat() | Zero():
             return False
         case Ann(e, t):
-            return _has_bound_zero(e) or _has_bound_zero(t)
+            return _has_bound(e, target) or _has_bound(t, target)
         case Pi(d, r):
-            return _has_bound_zero(d) or _has_bound_zero_shifted(r, 1)
+            return _has_bound(d, target) or _has_bound(r, target + 1)
         case App(f, a):
-            return _has_bound_zero_inf(f) or _has_bound_zero(a)
+            return _has_bound_inf(f, target) or _has_bound(a, target)
         case Succ(n):
-            return _has_bound_zero(n)
+            return _has_bound(n, target)
         case NatElim(m, b, s, k):
-            return any(_has_bound_zero(x) for x in (m, b, s, k))
+            return any(_has_bound(x, target) for x in (m, b, s, k))
         case Vec(a, n):
-            return _has_bound_zero(a) or _has_bound_zero(n)
+            return _has_bound(a, target) or _has_bound(n, target)
         case Nil(a):
-            return _has_bound_zero(a)
+            return _has_bound(a, target)
         case Cons(a, n, h, t):
-            return any(_has_bound_zero(x) for x in (a, n, h, t))
+            return any(_has_bound(x, target) for x in (a, n, h, t))
         case VecElim(a, m, nc, cc, n, v):
-            return any(_has_bound_zero(x) for x in (a, m, nc, cc, n, v))
+            return any(_has_bound(x, target) for x in (a, m, nc, cc, n, v))
         case Fin(n):
-            return _has_bound_zero(n)
-        case FZero(n) | FSucc(n, _):
-            return _has_bound_zero(n)
+            return _has_bound(n, target)
+        case FZero(n):
+            return _has_bound(n, target)
+        case FSucc(n, f):
+            return _has_bound(n, target) or _has_bound(f, target)
         case FinElim(m, fz, fs, n, f):
-            return any(_has_bound_zero(x) for x in (m, fz, fs, n, f))
+            return any(_has_bound(x, target) for x in (m, fz, fs, n, f))
         case Eq(a, x, y):
-            return any(_has_bound_zero(t) for t in (a, x, y))
+            return any(_has_bound(t, target) for t in (a, x, y))
         case Refl(a, x):
-            return _has_bound_zero(a) or _has_bound_zero(x)
+            return _has_bound(a, target) or _has_bound(x, target)
         case EqElim(a, m, rc, l, r, p):
-            return any(_has_bound_zero(t) for t in (a, m, rc, l, r, p))
+            return any(_has_bound(t, target) for t in (a, m, rc, l, r, p))
         case _:
             return False
 
 
+def _has_bound_zero(term: CheckTerm) -> bool:
+    """Return True if Bound(0) appears free in term."""
+    return _has_bound(term, 0)
+
+
+def _has_bound_zero_inf(term: InferTerm) -> bool:
+    return _has_bound_inf(term, 0)
+
+
 def _has_bound_zero_shifted(term: CheckTerm, target: int) -> bool:
-    """Check whether Bound(target) appears free (used for under-binder check)."""
-    # Simplified: just check if Bound(0) appears in term (for Pi range check)
-    # We only call this from _has_bound_zero which already handles the shift.
-    return _has_bound_zero(term)
+    """Return True if Bound(target) appears free in term."""
+    return _has_bound(term, target)
 
 
 def _paren_if_needed(s: str, term: CheckTerm) -> str:

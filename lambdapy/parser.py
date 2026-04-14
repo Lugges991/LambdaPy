@@ -521,13 +521,12 @@ def _make_cons_fn() -> InferTerm:
 
 def _make_vec_elim_fn() -> InferTerm:
     # \A P nil cons n v -> VecElim A P nil cons n v
-    # We give it a trivially-typeable annotation so applications work
     return Ann(
         Lam(Lam(Lam(Lam(Lam(Lam(
             Inf(VecElim(Inf(Bound(5)), Inf(Bound(4)), Inf(Bound(3)),
                         Inf(Bound(2)), Inf(Bound(1)), Inf(Bound(0))))
         )))))),
-        Inf(Pi(Inf(Star(0)), Inf(Star(0))))
+        Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Star(0)))))))))))))),
     )
 
 
@@ -558,7 +557,7 @@ def _make_fin_elim_fn() -> InferTerm:
             Inf(FinElim(Inf(Bound(4)), Inf(Bound(3)), Inf(Bound(2)),
                         Inf(Bound(1)), Inf(Bound(0))))
         ))))),
-        Inf(Pi(Inf(Star(0)), Inf(Star(0))))
+        Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Star(0))))))))))))
     )
 
 
@@ -588,5 +587,5 @@ def _make_eq_elim_fn() -> InferTerm:
             Inf(EqElim(Inf(Bound(5)), Inf(Bound(4)), Inf(Bound(3)),
                        Inf(Bound(2)), Inf(Bound(1)), Inf(Bound(0))))
         )))))),
-        Inf(Pi(Inf(Star(0)), Inf(Star(0))))
+        Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Star(0)))))))))))))),
     )
