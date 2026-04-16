@@ -26,7 +26,10 @@ from lambdapy.syntax import (
     Ann, App, Bound, CheckTerm, Cons, Eq, EqElim, Fin, FSucc, FZero,
     FinElim, Free, Global, Inf, InferTerm, Lam, Nat, NatElim, Nil, Pi,
     Refl, Star, Succ, Vec, VecElim, Zero,
+    VPi, VStar, VNat, VVec, VNil, VZero, VCons, VSucc, VFin, VFSucc, VFZero,
+    VRefl, VEq,
 )
+from lambdapy.eval import vapp
 
 
 # ---------------------------------------------------------------------------
@@ -476,13 +479,48 @@ def _make_succ_fn() -> InferTerm:
     )
 
 
+# Constructor for natural numbers
+# \m mz ms n -> NatElim m mz ms n
+# natElim type / LambdaPi-Paper:
+#     (m : Nat -> *) -> m Zero -> ((k : Nat) -> m k -> m (Succ k)) -> (n : Nat) -> m n
+# InferTerm:
+#     forall (m : Nat -> Type). m Zero -> (forall (l : Nat). m l -> m (Succ l)) -> forall (k : Nat). m k
+# Haskell code: https://github.com/ilya-klyuchnikov/lambdapi/blob/79ddf21581e03ea34a94cc00ffd5c8684d845ed9/src/LambdaPi/Main.hs#L17
+def make_nat_elim_type():
+    """Build the correct type of natElim as a Value."""
+    return (  # nopep8
+        # ∀m :: Nat -> ∗.
+        VPi(VPi(VNat(), lambda _: VStar(0)), lambda m:
+            #             m Zero ->
+            VPi(vapp(m, VZero()), lambda _:
+            #                       ( ∀l :: Nat.m l -> m (Succ l)) ->
+            VPi(VPi(VNat(), lambda l: VPi(vapp(m, l), lambda _: vapp(m, VSucc(l)))), lambda _:
+            #                                                          ∀k :: Nat.m k
+            VPi(VNat(), lambda k: vapp(m, k)))))
+    )
+
+
 def _make_nat_elim_fn() -> InferTerm:
-    # \P z s n -> NatElim P z s n
+    """Build the vector folding function.
+
+    Correct indices were derived by
+        from lambdapy.quote import quote0
+        quote0(make_nat_elim_type())
+    """
     return Ann(
         Lam(Lam(Lam(Lam(
             Inf(NatElim(Inf(Bound(3)), Inf(Bound(2)), Inf(Bound(1)), Inf(Bound(0))))
         )))),
-        Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Nat()), Inf(Star(0))))))))))
+        Inf(Pi(Inf(Pi(Inf(Nat()), Inf(Star(0)))),  # m : Nat -> *
+               Inf(Pi(Inf(App(Bound(0), Inf(Zero()))),  # mz : m Zero
+               Inf(Pi(Inf(Pi(Inf(Nat()),   # ms : (l : Nat) ->
+                      Inf(Pi(Inf(App(Bound(2), Inf(Bound(0)))),  # m l ->
+                             Inf(App(Bound(3), Inf(Succ(Inf(Bound(1))))))))  # m (Succ l)  # nopep8
+                    )),
+                    Inf(Pi(Inf(Nat()),   # k : Nat
+                           Inf(App(Bound(3), Inf(Bound(0))))))  # m k
+               ))))
+        ))
     )
 
 
@@ -519,14 +557,89 @@ def _make_cons_fn() -> InferTerm:
     )
 
 
-def _make_vec_elim_fn() -> InferTerm:
-    # \A P nil cons n v -> VecElim A P nil cons n v
-    return Ann(
+# Constructor for vectors
+# \a m mn mc l xs -> VecElim a m mn mc l xs
+# vecElim type / LambdaPi-Paper:
+#    (a : *) -> (m : (k : Nat) -> Vec a k -> *) ->
+#               m Zero (Nil a)
+#            -> ((l : Nat) -> (x : a) -> (xs : Vec a l) ->
+#               m l xs -> m (Succ l) (Cons a l x xs))
+#            -> (k : Nat) -> (xs : Vec a k) -> m k xs
+# InferTerm:
+#     forall (x : Type). forall (y : forall (y : Nat). Vec x y -> Type). y Zero (Nil x) -> (forall (z : Nat). forall (w : x). forall (u : Vec x z). y z u -> y (Succ z) (Cons x z w u)) -> forall (z : Nat). forall (w : Vec x z). y z w
+# Haskell code: https://github.com/ilya-klyuchnikov/lambdapi/blob/79ddf21581e03ea34a94cc00ffd5c8684d845ed9/src/LambdaPi/Main.hs#L26
+def make_vec_elim_type():
+    """Build the correct type of vecElim as a Value."""
+    return (  # nopep8
+        # ∀a :: *.
+        VPi(VStar(0), lambda a:
+            #      ∀m :: (∀k :: Nat. Vec a k -> *).
+            VPi(VPi(VNat(), lambda k: VPi(VVec(a, k), lambda _: VStar(0))), lambda m:
+            #         m Zero (Nil a)
+            #     ->
+            VPi(vapp(vapp(m, VZero()), VNil(a)), lambda _:
+            #         ( ∀l :: Nat.
+            VPi(VPi(VNat(), lambda l:
+                #                  ∀x :: a.
+                VPi(a, lambda x:
+                #                           ∀xs :: Vec a l.
+                VPi(VVec(a, l), lambda xs:
+                #     m l xs ->
+                VPi(vapp(vapp(m, l), xs), lambda _:
+                #               m (Succ l) (Cons a l x xs))
+                # ->
+                vapp(vapp(m, VSucc(l)), VCons(a, l, x, xs)))))), lambda _:
+            #        ∀k :: Nat.
+            VPi(VNat(), lambda k:
+            #                   ∀xs :: Vec α k.m k xs
+            VPi(VVec(a, k), lambda xs: vapp(vapp(m, k), xs)))))))
+    )
+
+
+def _make_vec_elim_fn() -> InferTerm:  # noqa
+    """Build the vector folding function.
+
+    Correct indices were derived by
+        from lambdapy.quote import quote0
+        quote0(make_vec_elim_type())
+    """
+    return Ann(  # nopep8
         Lam(Lam(Lam(Lam(Lam(Lam(
             Inf(VecElim(Inf(Bound(5)), Inf(Bound(4)), Inf(Bound(3)),
-                        Inf(Bound(2)), Inf(Bound(1)), Inf(Bound(0))))
-        )))))),
-        Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Star(0)))))))))))))),
+                        Inf(Bound(2)), Inf(Bound(1)), Inf(Bound(0)))))
+        ))))),
+        # (a : *) ->
+        Inf(Pi(Inf(Star(0)),
+            # m : (n : Nat) -> Vec a n -> *
+            Inf(Pi(Inf(Pi(Inf(Nat()), Inf(Pi(Inf(Vec(Inf(Bound(1)), Inf(Bound(0)))), Inf(Star(0)))))),
+                # mn : m Zero (Nil a)
+                Inf(Pi(Inf(App(App(Bound(0), Inf(Zero())), Inf(Nil(Inf(Bound(1)))))),
+                    # mc : (n : Nat) ->
+                    Inf(Pi(
+                        Inf(Pi(Inf(Nat()),
+                            # (x : a) ->
+                            Inf(Pi(Inf(Bound(3)),
+                                # (xs : Vec a n) ->
+                                Inf(Pi(Inf(Vec(Inf(Bound(4)), Inf(Bound(1)))),
+                                    # m n xs ->
+                                    Inf(Pi(Inf(App(App(Bound(4), Inf(Bound(2))), Inf(Bound(0)))),
+                                        # m (Succ n)
+                                        Inf(App(App(Bound(5), Inf(Succ(Inf(Bound(3))))),
+                                            # (Cons a n x xs)
+                                            Inf(Cons(Inf(Bound(6)), Inf(Bound(3)), Inf(Bound(2)), Inf(Bound(1))))))
+                                    ))
+                                ))
+                        )))),
+                        # n : Nat
+                        Inf(Pi(Inf(Nat()),
+                            # (xs : Vec a n)
+                            Inf(Pi(Inf(Vec(Inf(Bound(4)), Inf(Bound(0)))),
+                                # m n xs
+                                Inf(App(App(Bound(4), Inf(Bound(1))), Inf(Bound(0))))
+                            ))
+                        ))
+                    ))
+        ))))))
     )
 
 
@@ -551,13 +664,62 @@ def _make_fsucc_fn() -> InferTerm:
     )
 
 
+# Constructor for finites
+# \m mz ms n f -> FinElim m mz ms n f
+# finElim type:
+#    (m : (n : Nat) -> Fin n -> *) -> ((n : Nat) -> m (Succ n) (FZero n)) -> ((n : Nat) -> (f : Fin n) -> m n f -> m (Succ n) (FSucc n f)) -> (n : Nat) -> (f : Fin n) -> m n f
+# InferTerm:
+#    forall (x : forall (x : Nat). Fin x -> Type). (forall (y : Nat). x (Succ y) (FZero y)) -> (forall (y : Nat). forall (z : Fin y). x y z -> x (Succ y) (FSucc y z)) -> forall (y : Nat). forall (z : Fin y). x y z
+# Haskell code: https://github.com/ilya-klyuchnikov/lambdapi/blob/79ddf21581e03ea34a94cc00ffd5c8684d845ed9/src/LambdaPi/Main.hs#L49
+def make_fin_elim_type():
+    """Build the correct type of finElim as a Value."""
+    return (  # nopep8
+        # ∀m :: (∀n :: Nat. Fin n -> *).
+        VPi(VPi(VNat(), lambda n: VPi(VFin(n), lambda _: VStar(0))), lambda m:
+            #                            (∀n :: Nat. m (Succ n) (FZero n))
+            #                           ->
+            VPi(VPi(VNat(), lambda n: vapp(vapp(m, VSucc(n)), VFZero(n))), lambda _:
+            #                              (∀n :: Nat.
+            VPi(VPi(VNat(), lambda n:
+                #                                      ∀f :: Fin n.
+                VPi(VFin(n), lambda f:
+                #                                                   m n f ->
+                VPi(vapp(vapp(m, n), f), lambda _:
+                #                                                            m (Succ n) (FSucc n f))
+                #                        ->
+                vapp(vapp(m, VSucc(n)), VFSucc(n, f))))), lambda _:
+            #                               ∀n :: Nat. ∀f :: Fin n.
+            VPi(VNat(), lambda n: VPi(VFin(n), lambda f:
+            #                                                       m n f
+            vapp(vapp(m, n), f))))))
+    )
+
+
 def _make_fin_elim_fn() -> InferTerm:
-    return Ann(
+    return Ann(  # nopep8
         Lam(Lam(Lam(Lam(Lam(
             Inf(FinElim(Inf(Bound(4)), Inf(Bound(3)), Inf(Bound(2)),
                         Inf(Bound(1)), Inf(Bound(0))))
         ))))),
-        Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Star(0))))))))))))
+        # (m : (n : Nat) ->
+        Inf(Pi(Inf(Pi(Inf(Nat()),
+        # Fin n -> *) ->
+        Inf(Pi(Inf(Fin(Inf(Bound(0)))), Inf(Star(0)))))),
+            # ((n : Nat) ->
+            Inf(Pi(Inf(Pi(Inf(Nat()),
+            # m (Succ n) (FZero n)) ->
+            Inf(App(App(Bound(1), Inf(Succ(Inf(Bound(0))))), Inf(FZero(Inf(Bound(0)))))))),
+            # ((n : Nat) -> (f : Fin n) ->
+            Inf(Pi(Inf(Pi(Inf(Nat()), Inf(Pi(Inf(Fin(Inf(Bound(0)))),
+                # m n f -> m (Succ n) (FSucc n f)) ->
+                Inf(Pi(Inf(App(App(Bound(3), Inf(Bound(1))), Inf(Bound(0)))),
+                # m (Succ n) (FSucc n f)) ->
+                Inf(App(App(Bound(4), Inf(Succ(Inf(Bound(2))))), Inf(FSucc(Inf(Bound(2)), Inf(Bound(1)))))))))))),
+            # (n : Nat) -> (f : Fin n) -> m n f
+            Inf(Pi(Inf(Nat()), Inf(Pi(Inf(Fin(Inf(Bound(0)))),
+            # m n f
+            Inf(App(App(Bound(4), Inf(Bound(1))), Inf(Bound(0))))))))))))
+        ))
     )
 
 
@@ -581,11 +743,50 @@ def _make_refl_fn() -> InferTerm:
     )
 
 
+# Constructor for equality
+# \a m mr x y eq -> EqElim a m mr x y eq
+# eqElim type / LambdaPi-Paper:
+#     ∀(α :: ∗).∀(m :: ∀(x :: α).∀(y :: α).Eq α x y -> ∗).
+#                    (∀(z :: α).m z z (Refl α z))
+#               -> ∀(x :: α).∀(y :: α).∀(p :: Eq α x y).m x y p
+# InferTerm:
+#     forall
+# Haskell code: https://github.com/ilya-klyuchnikov/lambdapi/blob/79ddf21581e03ea34a94cc00ffd5c8684d845ed9/src/LambdaPi/Main.hs#L39
+def make_eq_elim_type():
+    """Build the correct type of eqElim as a Value."""
+    return (  # nopep8
+        # ∀(α :: ∗).
+        VPi(VStar(0), lambda a:
+            # ∀(m :: ∀(x :: α).∀(y :: α).Eq α x y -> ∗).
+            VPi(VPi(a, lambda x: VPi(a, lambda y: VPi(VEq(a, x, y), lambda _: VStar(0)))), lambda m:
+            # (∀(z :: α).m z z (Refl α z)) ->
+            VPi(VPi(a, lambda z: vapp(vapp(vapp(m, z), z), VRefl(a, z))), lambda _:
+            # ∀(x :: α).∀(y :: α).
+            VPi(a, lambda x: VPi(a, lambda y:
+            # ∀(p :: Eq α x y).
+            VPi(VEq(a, x, y), lambda p:
+            # m x y p
+            vapp(vapp(vapp(m, x), y), p)))))))
+    )
+
+
 def _make_eq_elim_fn() -> InferTerm:
+    """Build the equality folding function.
+
+    Correct indices were derived by
+        from lambdapy.quote import quote0
+        quote0(make_eq_elim_type())
+    """
     return Ann(
         Lam(Lam(Lam(Lam(Lam(Lam(
             Inf(EqElim(Inf(Bound(5)), Inf(Bound(4)), Inf(Bound(3)),
                        Inf(Bound(2)), Inf(Bound(1)), Inf(Bound(0))))
         )))))),
-        Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Pi(Inf(Star(0)), Inf(Star(0)))))))))))))),
+        Inf(Pi(Inf(Star(0)),
+            Inf(Pi(Inf(Pi(Inf(Bound(0)), Inf(Pi(Inf(Bound(1)), Inf(Pi(Inf(Eq(Inf(Bound(2)), Inf(Bound(1)), Inf(Bound(0)))), Inf(Star(0)))))))),
+                Inf(Pi(Inf(Pi(Inf(Bound(1)), Inf(App(App(App(Bound(1), Inf(Bound(0))), Inf(Bound(0))), Inf(Refl(Inf(Bound(2)), Inf(Bound(0)))))))),
+                    Inf(Pi(Inf(Bound(2)), Inf(Pi(Inf(Bound(3)),
+                        Inf(Pi(Inf(Eq(Inf(Bound(4)), Inf(Bound(1)), Inf(Bound(0)))),
+                            Inf(App(App(App(Bound(4), Inf(Bound(2))), Inf(Bound(1))), Inf(Bound(0))))))))))))))
+               ))
     )
