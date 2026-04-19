@@ -750,7 +750,7 @@ def _make_refl_fn() -> InferTerm:
 #                    (∀(z :: α).m z z (Refl α z))
 #               -> ∀(x :: α).∀(y :: α).∀(p :: Eq α x y).m x y p
 # InferTerm:
-#     forall
+#     forall (a : *) (m : (x y : a) -> Eq a x y -> *). ((z : a) -> m z z (Refl a z)) -> (x y : a) (p : Eq a x y) -> m x y p
 # Haskell code: https://github.com/ilya-klyuchnikov/lambdapi/blob/79ddf21581e03ea34a94cc00ffd5c8684d845ed9/src/LambdaPi/Main.hs#L39
 def make_eq_elim_type():
     """Build the correct type of eqElim as a Value."""
