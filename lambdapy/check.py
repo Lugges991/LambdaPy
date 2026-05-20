@@ -107,7 +107,7 @@ def type_inf(i: int, ctx: Context, term: InferTerm) -> Value:
 
         case NatElim(motive, base, step, k):
             # motive : Nat → * — we accept any universe
-            type_chk(i, ctx, motive, VPi(VNat(), lambda _: VStar(0)))
+            type_chk(i, ctx, motive, VPi(VNat(), lambda _: VStar(1)))
             motive_v = eval_chk(motive, [])
             # base : motive Zero
             type_chk(i, ctx, base, vapp(motive_v, VZero()))
@@ -143,7 +143,7 @@ def type_inf(i: int, ctx: Context, term: InferTerm) -> Value:
             _check_is_type(i, ctx, elem_type)
             a_v = eval_chk(elem_type, [])
             # motive : (n : Nat) → Vec A n → *
-            motive_ty = VPi(VNat(), lambda nv: VPi(VVec(a_v, nv), lambda _: VStar(0)))
+            motive_ty = VPi(VNat(), lambda nv: VPi(VVec(a_v, nv), lambda _: VStar(1)))
             type_chk(i, ctx, motive, motive_ty)
             motive_v = eval_chk(motive, [])
             # nil_case : motive Zero (Nil A)
@@ -185,7 +185,7 @@ def type_inf(i: int, ctx: Context, term: InferTerm) -> Value:
             # motive : (n : Nat) → Fin n → *
             type_chk(i, ctx, n, VNat())
             n_v = eval_chk(n, [])
-            motive_ty = VPi(VNat(), lambda nv: VPi(VFin(nv), lambda _: VStar(0)))
+            motive_ty = VPi(VNat(), lambda nv: VPi(VFin(nv), lambda _: VStar(1)))
             type_chk(i, ctx, motive, motive_ty)
             motive_v = eval_chk(motive, [])
             # fzero_case : (n : Nat) → motive (Succ n) (FZero n)
@@ -223,10 +223,13 @@ def type_inf(i: int, ctx: Context, term: InferTerm) -> Value:
         case EqElim(type_, motive, refl_case, left, right, proof):
             _check_is_type(i, ctx, type_)
             a_v = eval_chk(type_, [])
-            # motive : (x y : A) → Eq A x y → *
+            # motive : (x y : A) → Eq A x y → ∗₁
+            # The motive returns a type in ∗₁ rather than ∗₀ so that motives may
+            # range over either ordinary types (which inhabit ∗₀ ≤ ∗₁ by
+            # cumulativity) or the universe ∗₀ itself (which lives in ∗₁).
             motive_ty = VPi(a_v, lambda xv:
                             VPi(a_v, lambda yv:
-                            VPi(VEq(a_v, xv, yv), lambda _: VStar(0))))
+                            VPi(VEq(a_v, xv, yv), lambda _: VStar(1))))
             type_chk(i, ctx, motive, motive_ty)
             motive_v = eval_chk(motive, [])
             # refl_case : (z : A) → motive z z (Refl A z)
@@ -252,9 +255,8 @@ def type_chk(i: int, ctx: Context, term: CheckTerm, ty: Value) -> None:
     match term, ty:
         case Inf(t), _:
             inferred = type_inf(i, ctx, t)
-            if quote0(inferred) != quote0(ty):
-                if not _types_equal(inferred, ty):
-                    raise TypeCheckError(
+            if not _is_subtype(inferred, ty):
+                raise TypeCheckError(
                         f"Type mismatch.\n"
                         f"  Expected: {quote0(ty)!r}\n"
                         f"  Got:      {quote0(inferred)!r}"
@@ -304,82 +306,91 @@ def _check_is_type(i: int, ctx: Context, term: CheckTerm) -> int:
 # Universe-level-agnostic equality
 # ---------------------------------------------------------------------------
 
-def _types_equal(v1: Value, v2: Value) -> bool:
-    """Check if two values are definitionally equal, ignoring universe levels.
-    
-    This implements cumulative universe equality: VStar(j) ≡ VStar(k) for all j,k.
-    All other constructors are compared structurally.
+def _is_subtype(sub: Value, sup: Value) -> bool:
+    """Return True iff `sub` is a subtype of `sup` under cumulativity.
+
+    Both sides are first quoted to normal forms so that HOAS closures
+    inside Pi types are opened in lock-step under fresh probe binders.
+    The remaining work is a structural traversal that propagates variance.
     """
-    return _terms_equal(quote0(v1), quote0(v2))
+    return _subtype_chk(0, quote0(sub), quote0(sup))
 
 
-def _terms_equal(t1: CheckTerm, t2: CheckTerm) -> bool:
-    """Structural equality on CheckTerms, ignoring Star levels."""
+def _subtype_chk(i: int, t1: CheckTerm, t2: CheckTerm) -> bool:
+    """Subtype check on CheckTerms at binder depth i."""
+    # Fast path: definitional equality always implies subtyping.
+    if t1 == t2:
+        return True
     match t1, t2:
         case Inf(a), Inf(b):
-            return _infer_equal(a, b)
+            return _subtype_inf(i, a, b)
         case Lam(a), Lam(b):
-            return _terms_equal(a, b)
+            # Lambdas appear as types only when they are stuck (i.e. a
+            # higher-kinded value applied to a neutral).  Two such
+            # lambdas are subtypes iff their bodies are subtypes at the
+            # next binder depth.
+            return _subtype_chk(i + 1, a, b)
         case _:
             return False
 
 
-def _infer_equal(a: InferTerm, b: InferTerm) -> bool:
-    """Structural equality on InferTerms, ignoring Star levels."""
+def _subtype_inf(i: int, a: InferTerm, b: InferTerm) -> bool:
+    """Subtype check on InferTerms at binder depth i."""
+    if a == b:
+        return True
     match a, b:
-        case Star(i), Star(j):
-            # i is the inferred universe and j the expected
-            # for cumulativity it should be i <= j but this has to be 
-            # implemendet as subtyping
-            return True  # Universe levels ignored for equality!
-        case Ann(ea, ta), Ann(eb, tb):
-            return _terms_equal(ea, eb) and _terms_equal(ta, tb)
+        # Universes: cumulativity.
+        case Star(j), Star(k):
+            return j <= k
+
+        # Dependent function: contravariant domain, covariant codomain.
         case Pi(da, ra), Pi(db, rb):
-            return _terms_equal(da, db) and _terms_equal(ra, rb)
-        case Bound(i), Bound(j):
-            return i == j
-        case Free(na), Free(nb):
-            return na == nb
+            # Domain reverses direction (sub becomes sup and vice versa).
+            # `ra` and `rb` are checked under one additional binder.
+            return (_subtype_chk(i, db, da)
+                    and _subtype_chk(i + 1, ra, rb))
+
+        # Annotation: subtype on both the term and its annotation.
+        case Ann(ea, ta), Ann(eb, tb):
+            return (_subtype_chk(i, ea, eb)
+                    and _subtype_chk(i, ta, tb))
+
+        # Application: invariant — applied type families are invariant in
+        # their arguments unless the language records variance.  We still
+        # allow subtyping in the head position so e.g.  Vec * <: Vec *
+        # when both heads quote to the same neutral.
         case App(fa, aa), App(fb, ab):
-            return _infer_equal(fa, fb) and _terms_equal(aa, ab)
+            return _subtype_inf(i, fa, fb) and _defeq_chk(aa, ab)
+
+        # --- Invariant type formers --------------------------------------
+        # For Vec, Eq, Fin and Nat, the carrier and indices are invariant.
+        # Subtyping at these positions would change which canonical values
+        # inhabit the type, breaking subject reduction.
+        case Vec(ea, la), Vec(eb, lb):
+            return _defeq_chk(ea, eb) and _defeq_chk(la, lb)
+        case Eq(ta, la, ra), Eq(tb, lb, rb):
+            return (_defeq_chk(ta, tb) and _defeq_chk(la, lb)
+                    and _defeq_chk(ra, rb))
+        case Fin(na), Fin(nb):
+            return _defeq_chk(na, nb)
         case Nat(), Nat():
             return True
-        case Zero(), Zero():
-            return True
-        case Succ(na), Succ(nb):
-            return _terms_equal(na, nb)
-        case NatElim(ma, ba, sa, ka), NatElim(mb, bb, sb, kb):
-            return (_terms_equal(ma, mb) and _terms_equal(ba, bb)
-                    and _terms_equal(sa, sb) and _terms_equal(ka, kb))
-        case Vec(ea, la), Vec(eb, lb):
-            return _terms_equal(ea, eb) and _terms_equal(la, lb)
-        case Nil(ea), Nil(eb):
-            return _terms_equal(ea, eb)
-        case Cons(ea, la, ha, ta), Cons(eb, lb, hb, tb):
-            return (_terms_equal(ea, eb) and _terms_equal(la, lb)
-                    and _terms_equal(ha, hb) and _terms_equal(ta, tb))
-        case VecElim(ea, ma, na, ca, la, va), VecElim(eb, mb, nb, cb, lb, vb):
-            return (_terms_equal(ea, eb) and _terms_equal(ma, mb)
-                    and _terms_equal(na, nb) and _terms_equal(ca, cb)
-                    and _terms_equal(la, lb) and _terms_equal(va, vb))
-        case Fin(na), Fin(nb):
-            return _terms_equal(na, nb)
-        case FZero(na), FZero(nb):
-            return _terms_equal(na, nb)
-        case FSucc(na, xa), FSucc(nb, xb):
-            return _terms_equal(na, nb) and _terms_equal(xa, xb)
-        case FinElim(ma, fza, fsa, na, fa), FinElim(mb, fzb, fsb, nb, fb):
-            return (_terms_equal(ma, mb) and _terms_equal(fza, fzb)
-                    and _terms_equal(fsa, fsb) and _terms_equal(na, nb)
-                    and _terms_equal(fa, fb))
-        case Eq(ta, la, ra), Eq(tb, lb, rb):
-            return (_terms_equal(ta, tb) and _terms_equal(la, lb)
-                    and _terms_equal(ra, rb))
-        case Refl(ta, va), Refl(tb, vb):
-            return _terms_equal(ta, tb) and _terms_equal(va, vb)
-        case EqElim(ta, ma, ra, la, ria, pa), EqElim(tb, mb, rb, lb, rib, pb):
-            return (_terms_equal(ta, tb) and _terms_equal(ma, mb)
-                    and _terms_equal(ra, rb) and _terms_equal(la, lb)
-                    and _terms_equal(ria, rib) and _terms_equal(pa, pb))
+
+        # Variables — Bound indices must match exactly; free variables
+        # compared by name.  No subtyping at this level.
+        case Bound(j), Bound(k):
+            return j == k
+        case Free(na), Free(nb):
+            return na == nb
+
+        # Anything else falls back to definitional equality, recovering
+        # reflexivity for term-level constructors that can appear inside
+        # type expressions (e.g. eliminator targets).
         case _:
-            return a == b  # fallback for exact match
+            return a == b
+
+
+def _defeq_chk(t1: CheckTerm, t2: CheckTerm) -> bool:
+    """Definitional equality (no cumulativity).  Used at invariant
+    positions inside the subtype relation."""
+    return t1 == t2

@@ -490,7 +490,7 @@ def make_nat_elim_type():
     """Build the correct type of natElim as a Value."""
     return (  # nopep8
         # ∀m :: Nat -> ∗.
-        VPi(VPi(VNat(), lambda _: VStar(0)), lambda m:
+        VPi(VPi(VNat(), lambda _: VStar(1)), lambda m:
             #             m Zero ->
             VPi(vapp(m, VZero()), lambda _:
             #                       ( ∀l :: Nat.m l -> m (Succ l)) ->
@@ -511,7 +511,7 @@ def _make_nat_elim_fn() -> InferTerm:
         Lam(Lam(Lam(Lam(
             Inf(NatElim(Inf(Bound(3)), Inf(Bound(2)), Inf(Bound(1)), Inf(Bound(0))))
         )))),
-        Inf(Pi(Inf(Pi(Inf(Nat()), Inf(Star(0)))),  # m : Nat -> *
+        Inf(Pi(Inf(Pi(Inf(Nat()), Inf(Star(1)))),  # m : Nat -> *
                Inf(Pi(Inf(App(Bound(0), Inf(Zero()))),  # mz : m Zero
                Inf(Pi(Inf(Pi(Inf(Nat()),   # ms : (l : Nat) ->
                       Inf(Pi(Inf(App(Bound(2), Inf(Bound(0)))),  # m l ->
@@ -574,7 +574,7 @@ def make_vec_elim_type():
         # ∀a :: *.
         VPi(VStar(0), lambda a:
             #      ∀m :: (∀k :: Nat. Vec a k -> *).
-            VPi(VPi(VNat(), lambda k: VPi(VVec(a, k), lambda _: VStar(0))), lambda m:
+            VPi(VPi(VNat(), lambda k: VPi(VVec(a, k), lambda _: VStar(1))), lambda m:
             #         m Zero (Nil a)
             #     ->
             VPi(vapp(vapp(m, VZero()), VNil(a)), lambda _:
@@ -611,7 +611,7 @@ def _make_vec_elim_fn() -> InferTerm:  # noqa
         # (a : *) ->
         Inf(Pi(Inf(Star(0)),
             # m : (n : Nat) -> Vec a n -> *
-            Inf(Pi(Inf(Pi(Inf(Nat()), Inf(Pi(Inf(Vec(Inf(Bound(1)), Inf(Bound(0)))), Inf(Star(0)))))),
+            Inf(Pi(Inf(Pi(Inf(Nat()), Inf(Pi(Inf(Vec(Inf(Bound(1)), Inf(Bound(0)))), Inf(Star(1)))))),
                 # mn : m Zero (Nil a)
                 Inf(Pi(Inf(App(App(Bound(0), Inf(Zero())), Inf(Nil(Inf(Bound(1)))))),
                     # mc : (n : Nat) ->
@@ -675,7 +675,7 @@ def make_fin_elim_type():
     """Build the correct type of finElim as a Value."""
     return (  # nopep8
         # ∀m :: (∀n :: Nat. Fin n -> *).
-        VPi(VPi(VNat(), lambda n: VPi(VFin(n), lambda _: VStar(0))), lambda m:
+        VPi(VPi(VNat(), lambda n: VPi(VFin(n), lambda _: VStar(1))), lambda m:
             #                            (∀n :: Nat. m (Succ n) (FZero n))
             #                           ->
             VPi(VPi(VNat(), lambda n: vapp(vapp(m, VSucc(n)), VFZero(n))), lambda _:
@@ -704,7 +704,7 @@ def _make_fin_elim_fn() -> InferTerm:
         # (m : (n : Nat) ->
         Inf(Pi(Inf(Pi(Inf(Nat()),
         # Fin n -> *) ->
-        Inf(Pi(Inf(Fin(Inf(Bound(0)))), Inf(Star(0)))))),
+        Inf(Pi(Inf(Fin(Inf(Bound(0)))), Inf(Star(1)))))),
             # ((n : Nat) ->
             Inf(Pi(Inf(Pi(Inf(Nat()),
             # m (Succ n) (FZero n)) ->
@@ -753,12 +753,18 @@ def _make_refl_fn() -> InferTerm:
 #     forall (a : *) (m : (x y : a) -> Eq a x y -> *). ((z : a) -> m z z (Refl a z)) -> (x y : a) (p : Eq a x y) -> m x y p
 # Haskell code: https://github.com/ilya-klyuchnikov/lambdapi/blob/79ddf21581e03ea34a94cc00ffd5c8684d845ed9/src/LambdaPi/Main.hs#L39
 def make_eq_elim_type():
-    """Build the correct type of eqElim as a Value."""
+    """Build the correct type of eqElim as a Value.
+
+    Universe-polymorphic encoding: α lives at universe 1 so that eqElim can be
+    instantiated both with ordinary types (Nat, Bool : ∗₀ ≤ ∗₁) and with the
+    universe ∗₀ itself (∗₀ : ∗₁). The motive then returns ∗₁ so that motive
+    bodies can mention α-typed quantities at universe 1.
+    """
     return (  # nopep8
-        # ∀(α :: ∗).
-        VPi(VStar(0), lambda a:
-            # ∀(m :: ∀(x :: α).∀(y :: α).Eq α x y -> ∗).
-            VPi(VPi(a, lambda x: VPi(a, lambda y: VPi(VEq(a, x, y), lambda _: VStar(0)))), lambda m:
+        # ∀(α :: ∗₁).
+        VPi(VStar(1), lambda a:
+            # ∀(m :: ∀(x :: α).∀(y :: α).Eq α x y -> ∗₁).
+            VPi(VPi(a, lambda x: VPi(a, lambda y: VPi(VEq(a, x, y), lambda _: VStar(1)))), lambda m:
             # (∀(z :: α).m z z (Refl α z)) ->
             VPi(VPi(a, lambda z: vapp(vapp(vapp(m, z), z), VRefl(a, z))), lambda _:
             # ∀(x :: α).∀(y :: α).
@@ -782,8 +788,8 @@ def _make_eq_elim_fn() -> InferTerm:
             Inf(EqElim(Inf(Bound(5)), Inf(Bound(4)), Inf(Bound(3)),
                        Inf(Bound(2)), Inf(Bound(1)), Inf(Bound(0))))
         )))))),
-        Inf(Pi(Inf(Star(0)),
-            Inf(Pi(Inf(Pi(Inf(Bound(0)), Inf(Pi(Inf(Bound(1)), Inf(Pi(Inf(Eq(Inf(Bound(2)), Inf(Bound(1)), Inf(Bound(0)))), Inf(Star(0)))))))),
+        Inf(Pi(Inf(Star(1)),
+            Inf(Pi(Inf(Pi(Inf(Bound(0)), Inf(Pi(Inf(Bound(1)), Inf(Pi(Inf(Eq(Inf(Bound(2)), Inf(Bound(1)), Inf(Bound(0)))), Inf(Star(1)))))))),
                 Inf(Pi(Inf(Pi(Inf(Bound(1)), Inf(App(App(App(Bound(1), Inf(Bound(0))), Inf(Bound(0))), Inf(Refl(Inf(Bound(2)), Inf(Bound(0)))))))),
                     Inf(Pi(Inf(Bound(2)), Inf(Pi(Inf(Bound(3)),
                         Inf(Pi(Inf(Eq(Inf(Bound(4)), Inf(Bound(1)), Inf(Bound(0)))),
